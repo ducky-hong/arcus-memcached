@@ -1,0 +1,17 @@
+version: '2'
+services:
+    arcus-memcached:
+        image: cs494/arcus-memcached:latest
+        command: memcached -E /usr/local/lib/default_engine.so -z arcus-zookeeper:2181
+        entrypoint: ./entrypoint.sh
+        ports:
+            - "11211:11211"
+        links:
+            - arcus-zookeeper
+        environment:
+            - ZK_HOST=arcus-zookeeper
+    arcus-zookeeper:
+        image: cs494/arcus-zookeeper:latest
+        ports:
+            - "2181:2181"
+
