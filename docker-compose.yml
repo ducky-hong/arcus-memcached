@@ -2,16 +2,42 @@ version: '2'
 services:
     arcus-memcached:
         image: cs494/arcus-memcached:latest
-        command: memcached -E /usr/local/lib/default_engine.so -z arcus-zookeeper:2181
-        entrypoint: ./entrypoint.sh
+        #command: memcached -E /usr/local/lib/default_engine.so -z arcus-zookeeper:2181
+        #entrypoint: ./entrypoint.sh
         ports:
             - "11211:11211"
+        container_name: memcached-1
+        hostname: memcached-1
         links:
             - arcus-zookeeper
+            - arcus-hubble-collectd-server
         environment:
             - ZK_HOST=arcus-zookeeper
+            - COLLECTD_LISTENER_IP=arcus-hubble-collectd-server
+            - ARCUS_ZK=true
     arcus-zookeeper:
         image: cs494/arcus-zookeeper:latest
         ports:
             - "2181:2181"
+    arcus-hubble:
+        image: cs494/arcus-hubble-2:latest
+        ports:
+            - "8080:8080"
+            - "3000:3000"
+            - "25832:25832"
+        volumes_from:
+            - arcus-hubble-collectd-server
+        links:
+            - arcus-zookeeper
+            - arcus-memcached
+    arcus-hubble-collectd-server:
+        image: cs494/arcus-collectd:latest
+        environment:
+            - SERVER=true
+            - COLLECTD_LISTENER_IP=0.0.0.0
+        ports:
+            - "25828:25828"
+            - "25829:25829"
+        volumes:
+            - /hubble_data
 

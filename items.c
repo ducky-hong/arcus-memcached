@@ -448,7 +448,7 @@ static void *do_item_alloc_internal(struct default_engine *engine,
         id                    = clsid;
     } else {
         clsid_based_on_ntotal = clsid;
-        if (ntotal <= MAX_SM_VALUE_SIZE) {
+        if (ntotal <= MAX_SM_VALUE_LEN) {
             id = LRU_CLSID_FOR_SMALL;
         } else {
             id = clsid;
@@ -708,6 +708,7 @@ static hash_item *do_item_alloc(struct default_engine *engine,
     assert(it->slabs_clsid == 0);
 
     it->slabs_clsid = id;
+    assert(it->slabs_clsid > 0);
     assert(it != engine->items.heads[it->slabs_clsid]);
 
 #ifdef ENABLE_DETACH_REF_ITEM_FROM_LRU
@@ -762,7 +763,7 @@ static void item_link_q(struct default_engine *engine, hash_item *it)
     int clsid = 1;
 #else
     int clsid = it->slabs_clsid;
-    if (IS_COLL_ITEM(it) || ITEM_ntotal(engine, it) <= MAX_SM_VALUE_SIZE) {
+    if (IS_COLL_ITEM(it) || ITEM_ntotal(engine, it) <= MAX_SM_VALUE_LEN) {
         clsid = LRU_CLSID_FOR_SMALL;
     }
 #endif
@@ -805,7 +806,7 @@ static void item_unlink_q(struct default_engine *engine, hash_item *it)
     int clsid = 1;
 #else
     int clsid = it->slabs_clsid;
-    if (IS_COLL_ITEM(it) || ITEM_ntotal(engine, it) <= MAX_SM_VALUE_SIZE) {
+    if (IS_COLL_ITEM(it) || ITEM_ntotal(engine, it) <= MAX_SM_VALUE_LEN) {
         clsid = LRU_CLSID_FOR_SMALL;
     }
 #endif
@@ -891,7 +892,12 @@ static ENGINE_ERROR_CODE do_item_link(struct default_engine *engine, hash_item *
     /* link the item to the hash table */
     it->iflag |= ITEM_LINKED;
     it->time = engine->server.core->get_current_time();
+#ifdef LONG_KEY_SUPPORT
+    it->hval = engine->server.core->hash(key, it->nkey, 0);
+    assoc_insert(engine, it->hval, it);
+#else
     assoc_insert(engine, engine->server.core->hash(key, it->nkey, 0), it);
+#endif
 
     /* link the item to LRU list */
     item_link_q(engine, it);
@@ -926,8 +932,12 @@ static void do_item_unlink(struct default_engine *engine, hash_item *it,
         item_unlink_q(engine, it);
 
         /* unlink the item from hash table */
+#ifdef LONG_KEY_SUPPORT
+        assoc_delete(engine, it->hval, key, it->nkey);
+#else
         assoc_delete(engine, engine->server.core->hash(key, it->nkey, 0),
                      key, it->nkey);
+#endif
         it->iflag &= ~ITEM_LINKED;
 
         /* unlink the item from prefix info */
@@ -1496,7 +1506,11 @@ static hash_item *do_list_item_alloc(struct default_engine *engine,
         if (attrp->exptime == (rel_time_t)(-1)) info->mflags |= COLL_META_FLAG_STICKY;
 #endif
         if (attrp->readable == 1)               info->mflags |= COLL_META_FLAG_READABLE;
+#ifdef LONG_KEY_SUPPORT
+        info->itdist  = (uint16_t)((size_t*)info-(size_t*)it);
+#else
         info->itdist  = (uint8_t)((size_t*)info-(size_t*)it);
+#endif
         info->stotal  = 0;
         info->prefix  = NULL;
         info->head = info->tail = NULL;
@@ -1514,6 +1528,7 @@ static list_elem_item *do_list_elem_alloc(struct default_engine *engine,
     if (elem != NULL) {
         assert(elem->slabs_clsid == 0);
         elem->slabs_clsid = slabs_clsid(engine, ntotal);
+        assert(elem->slabs_clsid > 0);
         elem->refcount    = 1;
         elem->nbytes      = nbytes;
         elem->prev = elem->next = (list_elem_item *)ADDR_MEANS_UNLINKED; /* Unliked state */
@@ -1791,7 +1806,11 @@ static hash_item *do_set_item_alloc(struct default_engine *engine,
         if (attrp->exptime == (rel_time_t)(-1)) info->mflags |= COLL_META_FLAG_STICKY;
 #endif
         if (attrp->readable == 1)               info->mflags |= COLL_META_FLAG_READABLE;
+#ifdef LONG_KEY_SUPPORT
+        info->itdist  = (uint16_t)((size_t*)info-(size_t*)it);
+#else
         info->itdist  = (uint8_t)((size_t*)info-(size_t*)it);
+#endif
         info->stotal  = 0;
         info->prefix  = NULL;
         info->root    = NULL;
@@ -1809,6 +1828,7 @@ static set_hash_node *do_set_node_alloc(struct default_engine *engine,
     if (node != NULL) {
         assert(node->slabs_clsid == 0);
         node->slabs_clsid = slabs_clsid(engine, ntotal);
+        assert(node->slabs_clsid > 0);
         node->refcount    = 0;
         node->hdepth      = hash_depth;
         node->tot_hash_cnt = 0;
@@ -1833,6 +1853,7 @@ static set_elem_item *do_set_elem_alloc(struct default_engine *engine,
     if (elem != NULL) {
         assert(elem->slabs_clsid == 0);
         elem->slabs_clsid = slabs_clsid(engine, ntotal);
+        assert(elem->slabs_clsid > 0);
         elem->refcount    = 1;
         elem->nbytes      = nbytes;
         elem->next = (set_elem_item *)ADDR_MEANS_UNLINKED; /* Unliked state */
@@ -1955,7 +1976,7 @@ static ENGINE_ERROR_CODE do_set_elem_link(struct default_engine *engine,
     assert(info->root != NULL);
     set_hash_node *node = info->root;
     set_elem_item *find;
-    int hidx;
+    int hidx = -1;
 
     /* set hash value */
     elem->hval = genhash_string_hash(elem->value, elem->nbytes);
@@ -1967,6 +1988,7 @@ static ENGINE_ERROR_CODE do_set_elem_link(struct default_engine *engine,
         node = node->htab[hidx];
     }
     assert(node != NULL);
+    assert(hidx != -1);
 
     for (find = node->htab[hidx]; find != NULL; find = find->next) {
         if (set_hash_eq(elem->hval, elem->value, elem->nbytes,
@@ -2353,10 +2375,17 @@ static hash_item *do_btree_item_alloc(struct default_engine *engine,
         if (attrp->exptime == (rel_time_t)(-1)) info->mflags |= COLL_META_FLAG_STICKY;
 #endif
         if (attrp->readable == 1)               info->mflags |= COLL_META_FLAG_READABLE;
+#ifdef LONG_KEY_SUPPORT
+        info->itdist  = (uint16_t)((size_t*)info-(size_t*)it);
+        info->stotal  = 0;
+        info->prefix  = NULL;
+        info->bktype  = BKEY_TYPE_UNKNOWN;
+#else
         info->itdist  = (uint8_t)((size_t*)info-(size_t*)it);
         info->bktype  = BKEY_TYPE_UNKNOWN;
         info->stotal  = 0;
         info->prefix  = NULL;
+#endif
         info->maxbkeyrange.len = BKEY_NULL;
         info->root    = NULL;
         assert(do_coll_get_hash_item((coll_meta_info*)info) == it);
@@ -2373,6 +2402,7 @@ static btree_indx_node *do_btree_node_alloc(struct default_engine *engine,
     if (node != NULL) {
         assert(node->slabs_clsid == 0);
         node->slabs_clsid = slabs_clsid(engine, ntotal);
+        assert(node->slabs_clsid > 0);
         node->refcount    = 0;
         node->ndepth      = node_depth;
         node->used_count  = 0;
